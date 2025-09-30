@@ -1,0 +1,71 @@
+ version: '3.8'
+ 
+ services:
+  mysql:
+    image: mysql:8.0
+    container_name: slideshow_mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: slideshow_db
+      MYSQL_USER: slideshow_user
+      MYSQL_PASSWORD: slideshow_password
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./api/database/init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - slideshow_network
+
+  api:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    container_name: slideshow_api
+    environment:
+      NODE_ENV: development
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_NAME: slideshow_db
+      DB_USER: slideshow_user
+      DB_PASSWORD: slideshow_password
+      JWT_SECRET: your_jwt_secret_key_here
+      LINE_CHANNEL_ID: your_line_channel_id
+      LINE_CHANNEL_SECRET: your_line_channel_secret
+    ports:
+      - "3001:3001"
+    volumes:
+      - ./api:/app
+      - /app/node_modules
+      - ./uploads:/app/uploads
+    depends_on:
+      - mysql
+    networks:
+      - slideshow_network
+
+  web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+    container_name: slideshow_web
+    environment:
+      NODE_ENV: development
+      NEXT_PUBLIC_API_URL: http://localhost:3001
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./web:/app
+      - /app/node_modules
+      - /app/.next
+    depends_on:
+      - api
+    networks:
+      - slideshow_network
+
+volumes:
+  mysql_data:
+
+networks:
+  slideshow_network:
+    driver: bridge
+
