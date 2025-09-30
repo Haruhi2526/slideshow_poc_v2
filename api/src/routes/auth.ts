@@ -50,7 +50,8 @@ router.post('/login', asyncHandler(async (req: Request, res: Response) => {
     { expiresIn: '7d' }
   );
 
-  res.json({
+  // ↓ ここに return を追加する
+  return res.json({
     success: true,
     data: {
       user: {

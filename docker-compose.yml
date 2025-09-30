@@ -1,6 +1,6 @@
- version: '3.8'
- 
- services:
+version: '3.8'
+
+services:
   mysql:
     image: mysql:8.0
     container_name: slideshow_mysql
@@ -10,7 +10,7 @@
       MYSQL_USER: slideshow_user
       MYSQL_PASSWORD: slideshow_password
     ports:
-      - "3306:3306"
+      - "3307:3306"
     volumes:
       - mysql_data:/var/lib/mysql
       - ./api/database/init.sql:/docker-entrypoint-initdb.d/init.sql
@@ -68,4 +68,3 @@ volumes:
 networks:
   slideshow_network:
     driver: bridge
-
