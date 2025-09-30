@@ -15,7 +15,7 @@ router.get('/', authenticateToken, asyncHandler(async (req: AuthRequest, res: Re
     [userId]
   );
 
-  res.json({
+  return res.json({
     success: true,
     data: { albums: rows }
   });
@@ -40,7 +40,7 @@ router.post('/', authenticateToken, asyncHandler(async (req: AuthRequest, res: R
   );
 
   const insertResult = result as any;
-  res.status(201).json({
+  return res.status(201).json({
     success: true,
     data: {
       album: {
@@ -79,7 +79,7 @@ router.get('/:id', authenticateToken, asyncHandler(async (req: AuthRequest, res:
     [id]
   );
 
-  res.json({
+  return res.json({
     success: true,
     data: {
       album: {
@@ -110,7 +110,7 @@ router.put('/:id', authenticateToken, asyncHandler(async (req: AuthRequest, res:
     });
   }
 
-  res.json({
+  return res.json({
     success: true,
     data: { message: 'Album updated successfully' }
   });
@@ -135,7 +135,7 @@ router.delete('/:id', authenticateToken, asyncHandler(async (req: AuthRequest, r
     });
   }
 
-  res.json({
+  return res.json({
     success: true,
     data: { message: 'Album deleted successfully' }
   });

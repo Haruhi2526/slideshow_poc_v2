@@ -84,7 +84,7 @@ router.post('/upload/:albumId', authenticateToken, upload.single('image'), async
     );
 
     const insertResult = result as any;
-    res.status(201).json({
+    return res.status(201).json({
       success: true,
       data: {
         image: {
@@ -103,7 +103,7 @@ router.post('/upload/:albumId', authenticateToken, upload.single('image'), async
     });
   } catch (error) {
     console.error('Image processing error:', error);
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       error: { message: 'Failed to process image' }
     });
@@ -134,7 +134,7 @@ router.get('/album/:albumId', authenticateToken, asyncHandler(async (req: AuthRe
     [albumId]
   );
 
-  res.json({
+  return res.json({
     success: true,
     data: { images: rows }
   });
@@ -166,7 +166,7 @@ router.delete('/:id', authenticateToken, asyncHandler(async (req: AuthRequest, r
   // ファイルも削除（実際の実装では fs.unlink を使用）
   // fs.unlinkSync(image.file_path);
 
-  res.json({
+  return res.json({
     success: true,
     data: { message: 'Image deleted successfully' }
   });

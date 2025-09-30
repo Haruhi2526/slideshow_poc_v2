@@ -52,7 +52,7 @@ router.post('/generate/:albumId', authenticateToken, asyncHandler(async (req: Au
   // 非同期でスライドショー生成を開始
   generateSlideshowAsync(slideshowId, images, albumId);
 
-  res.status(202).json({
+  return res.status(202).json({
     success: true,
     data: {
       slideshow_id: slideshowId,
@@ -151,7 +151,7 @@ router.get('/album/:albumId', authenticateToken, asyncHandler(async (req: AuthRe
     [albumId]
   );
 
-  res.json({
+  return res.json({
     success: true,
     data: { slideshows: rows }
   });
@@ -176,7 +176,7 @@ router.get('/:id', authenticateToken, asyncHandler(async (req: AuthRequest, res:
     });
   }
 
-  res.json({
+  return res.json({
     success: true,
     data: { slideshow }
   });
@@ -207,7 +207,7 @@ router.delete('/:id', authenticateToken, asyncHandler(async (req: AuthRequest, r
   // ファイルも削除（実際の実装では fs.unlink を使用）
   // fs.unlinkSync(slideshow.file_path);
 
-  res.json({
+  return res.json({
     success: true,
     data: { message: 'Slideshow deleted successfully' }
   });

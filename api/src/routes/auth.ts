@@ -67,7 +67,7 @@ router.post('/login', asyncHandler(async (req: Request, res: Response) => {
 
 // ユーザー情報取得
 router.get('/me', authenticateToken, asyncHandler(async (req: AuthRequest, res: Response) => {
-  res.json({
+  return res.json({
     success: true,
     data: {
       user: req.user
