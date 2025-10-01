@@ -1,26 +1,20 @@
 import { Router, Request, Response } from 'express';
 import multer from 'multer';
 import path from 'path';
-import sharp from 'sharp';
 import { asyncHandler } from '../middleware/errorHandler';
 import { authenticateToken, AuthRequest } from '../middleware/auth';
 import { getPool } from '../utils/database';
+import { StorageFactory } from '../services/StorageFactory';
+import { storageConfig } from '../config/storage';
 
 const router = Router();
 
-// アップロード設定
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, 'uploads/images/');
-  },
-  filename: (req, file, cb) => {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    cb(null, file.fieldname + '-' + uniqueSuffix + path.extname(file.originalname));
-  }
-});
+// ストレージサービスを初期化
+const storageService = StorageFactory.create(storageConfig);
 
+// アップロード設定（メモリストレージを使用）
 const upload = multer({
-  storage,
+  storage: multer.memoryStorage(),
   limits: {
     fileSize: 10 * 1024 * 1024, // 10MB
   },
@@ -65,47 +59,54 @@ router.post('/upload/:albumId', authenticateToken, upload.single('image'), async
   }
 
   try {
-    // 画像のメタデータ取得
-    const imageInfo = await sharp(req.file.path).metadata();
+    console.log(`Starting image upload for album ${albumId}, user ${userId}`);
+    console.log(`File details: ${req.file.originalname}, size: ${req.file.size}, type: ${req.file.mimetype}`);
+    
+    // ストレージサービスを使用して画像をアップロード
+    const uploadResult = await storageService.upload(req.file, albumId);
+    console.log(`Storage upload completed: ${uploadResult.url}`);
     
     // データベースに画像情報を保存
     const [result] = await pool.execute(
-      'INSERT INTO images (album_id, filename, original_filename, file_path, file_size, mime_type, width, height) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      'INSERT INTO images (album_id, filename, original_filename, file_path, file_size, mime_type, width, height, url) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
       [
         albumId,
-        req.file.filename,
-        req.file.originalname,
-        req.file.path,
-        req.file.size,
-        req.file.mimetype,
-        imageInfo.width,
-        imageInfo.height
+        uploadResult.filename,
+        uploadResult.originalName,
+        uploadResult.path,
+        uploadResult.size,
+        uploadResult.mimeType,
+        0, // width - 必要に応じて取得
+        0, // height - 必要に応じて取得
+        uploadResult.url
       ]
     );
 
     const insertResult = result as any;
-    res.status(201).json({
+    console.log(`Image saved to database with ID: ${insertResult.insertId}`);
+    
+    return res.status(201).json({
       success: true,
       data: {
         image: {
           id: insertResult.insertId,
           album_id: albumId,
-          filename: req.file.filename,
-          original_filename: req.file.originalname,
-          file_path: req.file.path,
-          file_size: req.file.size,
-          mime_type: req.file.mimetype,
-          width: imageInfo.width,
-          height: imageInfo.height,
+          filename: uploadResult.filename,
+          original_filename: uploadResult.originalName,
+          file_path: uploadResult.path,
+          file_size: uploadResult.size,
+          mime_type: uploadResult.mimeType,
+          url: uploadResult.url,
           created_at: new Date()
         }
       }
     });
   } catch (error) {
     console.error('Image processing error:', error);
-    res.status(500).json({
+    const errorMessage = error instanceof Error ? error.message : 'Failed to process image';
+    return res.status(500).json({
       success: false,
-      error: { message: 'Failed to process image' }
+      error: { message: errorMessage }
     });
   }
 }));
@@ -130,11 +131,11 @@ router.get('/album/:albumId', authenticateToken, asyncHandler(async (req: AuthRe
   }
 
   const [rows] = await pool.execute(
-    'SELECT * FROM images WHERE album_id = ? ORDER BY created_at ASC',
+    'SELECT * FROM images WHERE album_id = ? ORDER BY display_order ASC, created_at ASC',
     [albumId]
   );
 
-  res.json({
+  return res.json({
     success: true,
     data: { images: rows }
   });
@@ -160,13 +161,13 @@ router.delete('/:id', authenticateToken, asyncHandler(async (req: AuthRequest, r
     });
   }
 
+  // ストレージからファイルを削除
+  await storageService.delete(image.file_path);
+
   // データベースから削除
   await pool.execute('DELETE FROM images WHERE id = ?', [id]);
 
-  // ファイルも削除（実際の実装では fs.unlink を使用）
-  // fs.unlinkSync(image.file_path);
-
-  res.json({
+  return res.json({
     success: true,
     data: { message: 'Image deleted successfully' }
   });

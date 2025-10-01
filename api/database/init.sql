@@ -32,6 +32,9 @@ CREATE TABLE IF NOT EXISTS images (
     mime_type VARCHAR(100) NOT NULL,
     width INT,
     height INT,
+    url VARCHAR(500) NOT NULL,
+    rotation INT DEFAULT 0,
+    display_order INT DEFAULT 0,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (album_id) REFERENCES albums(id) ON DELETE CASCADE
 );

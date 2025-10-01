@@ -1,5 +1,8 @@
 FROM node:18-alpine
 
+# FFmpegをインストール
+RUN apk add --no-cache ffmpeg
+
 WORKDIR /app
 
 COPY package*.json ./

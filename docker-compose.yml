@@ -24,6 +24,7 @@ services:
     container_name: slideshow_api
     environment:
       NODE_ENV: development
+      DOCKER_ENV: true
       DB_HOST: mysql
       DB_PORT: 3306
       DB_NAME: slideshow_db
@@ -32,6 +33,7 @@ services:
       JWT_SECRET: your_jwt_secret_key_here
       LINE_CHANNEL_ID: your_line_channel_id
       LINE_CHANNEL_SECRET: your_line_channel_secret
+      NEXT_PUBLIC_API_URL: http://localhost:3001
     ports:
       - "3001:3001"
     volumes:
