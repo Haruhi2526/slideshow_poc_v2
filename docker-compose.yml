@@ -24,6 +24,7 @@ services:
     container_name: slideshow_api
     environment:
       NODE_ENV: development
+      DOCKER_ENV: true
       DB_HOST: mysql
       DB_PORT: 3306
       DB_NAME: slideshow_db

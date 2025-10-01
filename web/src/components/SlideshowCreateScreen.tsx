@@ -1,8 +1,9 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import toast from 'react-hot-toast'
+import { useAuth } from './AuthProvider'
 
 interface Image {
   id: string
@@ -16,6 +17,7 @@ interface SlideshowCreateScreenProps {
 
 export function SlideshowCreateScreen({ albumId }: SlideshowCreateScreenProps) {
   const router = useRouter()
+  const { token } = useAuth()
   const [images, setImages] = useState<Image[]>([])
   const [bgm, setBgm] = useState('none')
   const [transition, setTransition] = useState('fade')
@@ -39,31 +41,16 @@ export function SlideshowCreateScreen({ albumId }: SlideshowCreateScreenProps) {
     { value: 'dissolve', label: 'ディゾルブ' },
   ]
 
-  useEffect(() => {
-    fetchImages()
-    return () => {
-      if (previewIntervalRef.current) {
-        clearInterval(previewIntervalRef.current)
-      }
+  const fetchImages = useCallback(async () => {
+    if (!token) {
+      console.log('No token available, skipping image fetch')
+      return
     }
-  }, [albumId])
-
-  useEffect(() => {
-    if (images.length > 0) {
-      startPreview()
-    }
-    return () => {
-      if (previewIntervalRef.current) {
-        clearInterval(previewIntervalRef.current)
-      }
-    }
-  }, [images])
-
-  const fetchImages = async () => {
+    
     try {
       const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/albums/${albumId}/images`, {
         headers: {
-          'Authorization': `Bearer ${localStorage.getItem('auth_token')}`,
+          'Authorization': `Bearer ${token}`,
         },
       })
 
@@ -71,13 +58,29 @@ export function SlideshowCreateScreen({ albumId }: SlideshowCreateScreenProps) {
         const data = await response.json()
         setImages(data.data.images)
       } else {
-        throw new Error('画像の取得に失敗しました')
+        const errorData = await response.json().catch(() => ({}))
+        console.error('API Error:', errorData)
+        const errorMessage = `画像の取得に失敗しました: ${errorData.error?.message || response.statusText}`
+        toast.error(errorMessage)
+        return
       }
     } catch (error) {
       console.error('Fetch images error:', error)
-      toast.error('画像の取得に失敗しました')
+      // ネットワークエラーなどの場合のみエラーメッセージを表示
+      if (!(error instanceof Error && error.message.includes('画像の取得に失敗しました'))) {
+        toast.error('画像の取得に失敗しました')
+      }
     }
-  }
+  }, [albumId, token])
+
+  useEffect(() => {
+    fetchImages()
+    return () => {
+      if (previewIntervalRef.current) {
+        clearInterval(previewIntervalRef.current)
+      }
+    }
+  }, [fetchImages])
 
   const startPreview = () => {
     if (images.length <= 1) return
@@ -85,6 +88,13 @@ export function SlideshowCreateScreen({ albumId }: SlideshowCreateScreenProps) {
     previewIntervalRef.current = setInterval(() => {
       setCurrentPreviewIndex(prev => (prev + 1) % images.length)
     }, 2000)
+  }
+
+  const stopPreview = () => {
+    if (previewIntervalRef.current) {
+      clearInterval(previewIntervalRef.current)
+      previewIntervalRef.current = null
+    }
   }
 
   const generateSlideshow = async () => {
@@ -101,7 +111,7 @@ export function SlideshowCreateScreen({ albumId }: SlideshowCreateScreenProps) {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('auth_token')}`,
+          'Authorization': `Bearer ${token}`,
         },
         body: JSON.stringify({
           albumId,
@@ -111,37 +121,91 @@ export function SlideshowCreateScreen({ albumId }: SlideshowCreateScreenProps) {
       })
 
       if (response.ok) {
-        // プログレスシミュレーション
-        const progressInterval = setInterval(() => {
-          setProgress(prev => {
-            if (prev >= 100) {
-              clearInterval(progressInterval)
-              setIsGenerating(false)
-              toast.success('スライドショーの生成が完了しました！')
-              router.push('/')
-              return 100
-            }
-            return prev + Math.random() * 10
-          })
-        }, 500)
-
-        // 実際のAPIレスポンスを待つ
         const data = await response.json()
-        if (data.success) {
-          clearInterval(progressInterval)
-          setProgress(100)
-          setTimeout(() => {
-            setIsGenerating(false)
-            toast.success('スライドショーの生成が完了しました！')
-            router.push('/')
-          }, 1000)
+        if (data.success && data.data.slideshow_id) {
+          const slideshowId = data.data.slideshow_id
+          
+          // プログレスシミュレーション
+          let consecutiveErrors = 0
+          const maxConsecutiveErrors = 5
+          
+          const progressInterval = setInterval(async () => {
+            try {
+              // スライドショーの状態を確認
+              const controller = new AbortController()
+              const timeoutId = setTimeout(() => controller.abort(), 10000) // 10秒タイムアウト
+              
+              const statusResponse = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/slideshows/status/${slideshowId}`, {
+                headers: {
+                  'Authorization': `Bearer ${token}`,
+                },
+                signal: controller.signal
+              })
+              
+              clearTimeout(timeoutId)
+              consecutiveErrors = 0 // 成功時はエラーカウンターをリセット
+              
+              if (statusResponse.ok) {
+                const statusData = await statusResponse.json()
+                const slideshow = statusData.data.slideshow
+                
+                if (slideshow.status === 'completed') {
+                  clearInterval(progressInterval)
+                  setProgress(100)
+                  setTimeout(() => {
+                    setIsGenerating(false)
+                    toast.success('スライドショーの生成が完了しました！')
+                    router.push('/')
+                  }, 1000)
+                } else if (slideshow.status === 'failed') {
+                  clearInterval(progressInterval)
+                  setIsGenerating(false)
+                  toast.error('スライドショーの生成に失敗しました')
+                } else {
+                  // 処理中の場合はプログレスを更新
+                  setProgress(prev => Math.min(prev + Math.random() * 5, 95))
+                }
+              } else {
+                console.warn('Status check failed:', statusResponse.status)
+                consecutiveErrors++
+                if (consecutiveErrors >= maxConsecutiveErrors) {
+                  clearInterval(progressInterval)
+                  setIsGenerating(false)
+                  toast.error('サーバーとの通信に問題が発生しました。しばらく待ってから再度お試しください。')
+                  return
+                }
+                // プログレスは続行
+                setProgress(prev => Math.min(prev + Math.random() * 5, 95))
+              }
+            } catch (error) {
+              console.error('Status check error:', error)
+              consecutiveErrors++
+              
+              if (error instanceof Error && error.name === 'AbortError') {
+                console.warn('Status check timed out')
+              }
+              
+              if (consecutiveErrors >= maxConsecutiveErrors) {
+                clearInterval(progressInterval)
+                setIsGenerating(false)
+                toast.error('サーバーとの通信に問題が発生しました。しばらく待ってから再度お試しください。')
+                return
+              }
+              
+              // エラーが発生してもプログレスは続行（サーバーが再起動中の場合など）
+              setProgress(prev => Math.min(prev + Math.random() * 5, 95))
+            }
+          }, 5000) // チェック間隔を5秒に延長
+        } else {
+          throw new Error('スライドショーの生成に失敗しました')
         }
       } else {
-        throw new Error('スライドショーの生成に失敗しました')
+        const errorData = await response.json().catch(() => ({}))
+        throw new Error(errorData.error?.message || 'スライドショーの生成に失敗しました')
       }
     } catch (error) {
       console.error('Generate slideshow error:', error)
-      toast.error('スライドショーの生成に失敗しました')
+      toast.error(error instanceof Error ? error.message : 'スライドショーの生成に失敗しました')
       setIsGenerating(false)
       setProgress(0)
     }
@@ -225,10 +289,30 @@ export function SlideshowCreateScreen({ albumId }: SlideshowCreateScreenProps) {
               <div className="absolute bottom-4 left-4 bg-black bg-opacity-50 text-white px-3 py-1 rounded text-sm">
                 {currentPreviewIndex + 1} / {images.length}
               </div>
+              
+              {/* プレビューコントロール */}
+              {images.length > 1 && (
+                <div className="absolute top-4 right-4 flex space-x-2">
+                  <button
+                    onClick={startPreview}
+                    disabled={isGenerating}
+                    className="bg-black bg-opacity-50 text-white px-3 py-1 rounded text-sm hover:bg-opacity-70 disabled:opacity-50"
+                  >
+                    再生
+                  </button>
+                  <button
+                    onClick={stopPreview}
+                    disabled={isGenerating}
+                    className="bg-black bg-opacity-50 text-white px-3 py-1 rounded text-sm hover:bg-opacity-70 disabled:opacity-50"
+                  >
+                    停止
+                  </button>
+                </div>
+              )}
             </div>
             
             <p className="text-sm text-gray-500 mt-2">
-              プレビューは2秒間隔で自動切り替えされます
+              {images.length > 1 ? 'プレビューは2秒間隔で自動切り替えされます' : '画像が1枚の場合はプレビューは表示されません'}
             </p>
           </div>
 
@@ -299,9 +383,15 @@ export function SlideshowCreateScreen({ albumId }: SlideshowCreateScreenProps) {
                     ></div>
                   </div>
                   
-                  <p className="text-sm text-gray-600">
+                  <p className="text-sm text-gray-600 mb-2">
                     {Math.round(Math.min(progress, 100))}% 完了
                   </p>
+                  
+                  <div className="text-xs text-gray-500">
+                    <p>• {images.length}枚の画像を処理中</p>
+                    <p>• 動画ファイルを生成中</p>
+                    <p>• 完了まで数分かかる場合があります</p>
+                  </div>
                 </div>
                 
                 <div className="text-sm text-gray-500">

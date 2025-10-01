@@ -5,11 +5,20 @@ import { asyncHandler } from '../middleware/errorHandler';
 import { authenticateToken, AuthRequest } from '../middleware/auth';
 import { getPool } from '../utils/database';
 
+// FFmpegのパスを設定（Docker環境ではシステムのFFmpegを使用）
+if (process.env.NODE_ENV === 'production' || process.env.DOCKER_ENV) {
+  // Docker環境ではシステムのFFmpegを使用
+  ffmpeg.setFfmpegPath('ffmpeg');
+} else {
+  // ローカル開発環境ではffmpeg-staticを使用
+  ffmpeg.setFfmpegPath(require('ffmpeg-static'));
+}
+
 const router = Router();
 
 // スライドショー生成
-router.post('/generate/:albumId', authenticateToken, asyncHandler(async (req: AuthRequest, res: Response) => {
-  const { albumId } = req.params;
+router.post('/generate', authenticateToken, asyncHandler(async (req: AuthRequest, res: Response) => {
+  const { albumId } = req.body;
   const userId = req.user!.id;
   const pool = getPool();
 
@@ -67,52 +76,94 @@ const generateSlideshowAsync = async (slideshowId: number, images: any[], albumI
   const pool = getPool();
   
   try {
+    console.log(`Starting slideshow generation for ID: ${slideshowId}, Images: ${images.length}`);
+    
     const outputPath = `uploads/slideshows/slideshow-${slideshowId}.mp4`;
     const filename = `slideshow-${slideshowId}.mp4`;
 
-    // FFmpegでスライドショー生成
+    // 出力ディレクトリを作成
+    const fs = require('fs');
+    const path = require('path');
+    const outputDir = path.dirname(outputPath);
+    if (!fs.existsSync(outputDir)) {
+      fs.mkdirSync(outputDir, { recursive: true });
+      console.log(`Created output directory: ${outputDir}`);
+    }
+
+    // 画像ファイルの存在確認
+    for (const image of images) {
+      if (!fs.existsSync(image.file_path)) {
+        throw new Error(`Image file not found: ${image.file_path}`);
+      }
+      console.log(`Image file exists: ${image.file_path}`);
+    }
+
+    // FFmpegでスライドショー生成（複数画像対応）
     await new Promise<void>((resolve, reject) => {
+      console.log(`Starting FFmpeg process for slideshow ${slideshowId}`);
+      
       const command = ffmpeg();
 
-      // 画像を入力として追加
+      // 全ての画像を入力として追加
       images.forEach((image, index) => {
+        console.log(`Adding input ${index}: ${image.file_path}`);
         command.input(image.file_path);
       });
 
+      // 複数画像のスライドショー生成
+      const filterParts = images.map((_, index) => 
+        `[${index}:v]scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2,setsar=1[img${index}]`
+      );
+      
+      // 画像を連結するフィルター
+      const concatFilter = images.map((_, index) => `[img${index}]`).join('') + `concat=n=${images.length}:v=1:a=0[outv]`;
+      
+      const filterComplex = [...filterParts, concatFilter].join(';');
+      console.log(`FFmpeg filter complex: ${filterComplex}`);
+
       command
-        .complexFilter([
-          // 各画像を3秒間表示
-          ...images.map((_, index) => `[${index}:v]scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30[img${index}]`),
-          // 画像を連結
-          images.map((_, index) => `[img${index}]`).join('') + `concat=n=${images.length}:v=1:a=0[outv]`
-        ])
+        .complexFilter(filterComplex)
         .outputOptions([
           '-map [outv]',
           '-c:v libx264',
           '-pix_fmt yuv420p',
-          '-r 30'
+          '-r 30',
+          '-preset fast',
+          '-crf 23'
         ])
         .output(outputPath)
+        .on('start', (commandLine) => {
+          console.log('FFmpeg command started:', commandLine);
+        })
+        .on('progress', (progress) => {
+          console.log(`FFmpeg progress: ${progress.percent || 0}% done`);
+        })
         .on('end', () => {
-          console.log('Slideshow generation completed');
+          console.log(`Slideshow generation completed successfully: ${outputPath}`);
           resolve();
         })
-        .on('error', (err) => {
-          console.error('Slideshow generation error:', err);
+        .on('error', (err: any) => {
+          console.error('FFmpeg generation error:', err);
+          console.error('Error details:', {
+            message: err.message,
+            code: err.code,
+            signal: err.signal,
+            killed: err.killed,
+            cmd: err.cmd
+          });
           reject(err);
         })
         .run();
     });
 
     // ファイルサイズ取得
-    const fs = require('fs');
     const stats = fs.statSync(outputPath);
     const fileSize = stats.size;
 
     // データベース更新
     await pool.execute(
       'UPDATE slideshows SET filename = ?, file_path = ?, file_size = ?, duration = ?, status = ? WHERE id = ?',
-      [filename, outputPath, fileSize, images.length * 3, 'completed', slideshowId]
+      [filename, outputPath, fileSize, images.length * 2, 'completed', slideshowId]
     );
 
     console.log(`Slideshow ${slideshowId} generated successfully`);
@@ -126,6 +177,22 @@ const generateSlideshowAsync = async (slideshowId: number, images: any[], albumI
     );
   }
 };
+
+// 全スライドショー一覧取得
+router.get('/', authenticateToken, asyncHandler(async (req: AuthRequest, res: Response) => {
+  const userId = req.user!.id;
+  const pool = getPool();
+
+  const [rows] = await pool.execute(
+    'SELECT s.* FROM slideshows s JOIN albums a ON s.album_id = a.id WHERE a.user_id = ? ORDER BY s.created_at DESC',
+    [userId]
+  );
+
+  return res.json({
+    success: true,
+    data: { slideshows: rows }
+  });
+}));
 
 // スライドショー一覧取得
 router.get('/album/:albumId', authenticateToken, asyncHandler(async (req: AuthRequest, res: Response) => {
@@ -159,6 +226,31 @@ router.get('/album/:albumId', authenticateToken, asyncHandler(async (req: AuthRe
 
 // スライドショー詳細取得
 router.get('/:id', authenticateToken, asyncHandler(async (req: AuthRequest, res: Response) => {
+  const { id } = req.params;
+  const userId = req.user!.id;
+  const pool = getPool();
+
+  const [rows] = await pool.execute(
+    'SELECT s.* FROM slideshows s JOIN albums a ON s.album_id = a.id WHERE s.id = ? AND a.user_id = ?',
+    [id, userId]
+  );
+
+  const slideshow = (rows as any[])[0];
+  if (!slideshow) {
+    return res.status(404).json({
+      success: false,
+      error: { message: 'Slideshow not found' }
+    });
+  }
+
+  return res.json({
+    success: true,
+    data: { slideshow }
+  });
+}));
+
+// スライドショー状態確認
+router.get('/status/:id', authenticateToken, asyncHandler(async (req: AuthRequest, res: Response) => {
   const { id } = req.params;
   const userId = req.user!.id;
   const pool = getPool();

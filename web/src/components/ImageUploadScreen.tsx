@@ -1,8 +1,10 @@
 'use client'
 
-import { useState, useRef, useCallback } from 'react'
+import React, { useState, useRef, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import toast from 'react-hot-toast'
+import { useAuth } from './AuthProvider'
+import { CreateAlbumModal } from './CreateAlbumModal'
 
 interface ImageFile {
   file: File
@@ -10,12 +12,80 @@ interface ImageFile {
   id: string
 }
 
+interface Album {
+  id: string
+  name: string
+  description: string
+}
+
 export function ImageUploadScreen() {
   const router = useRouter()
+  const { token } = useAuth()
   const [selectedImages, setSelectedImages] = useState<ImageFile[]>([])
   const [isDragOver, setIsDragOver] = useState(false)
   const [isUploading, setIsUploading] = useState(false)
+  const [albums, setAlbums] = useState<Album[]>([])
+  const [selectedAlbumId, setSelectedAlbumId] = useState<string>('')
+  const [isLoadingAlbums, setIsLoadingAlbums] = useState(true)
+  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false)
+  const [isRefreshingAlbums, setIsRefreshingAlbums] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  // アルバム一覧を取得
+  const fetchAlbums = useCallback(async (isRefresh = false) => {
+    if (!token) {
+      console.log('No token available, skipping album fetch')
+      setIsLoadingAlbums(false)
+      return
+    }
+    
+    // リフレッシュ中でない場合のみローディング状態を設定
+    if (!isRefresh) {
+      setIsLoadingAlbums(true)
+    }
+    
+    try {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/albums`, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      })
+
+      if (response.ok) {
+        const data = await response.json()
+        setAlbums(data.data.albums)
+        if (data.data.albums.length > 0) {
+          setSelectedAlbumId(data.data.albums[0].id)
+        }
+      } else {
+        const errorData = await response.json().catch(() => ({}))
+        console.error('API Error:', errorData)
+        const errorMessage = `アルバムの取得に失敗しました: ${errorData.error?.message || response.statusText}`
+        toast.error(errorMessage)
+      }
+    } catch (error) {
+      console.error('Fetch albums error:', error)
+      toast.error('アルバムの取得に失敗しました')
+    } finally {
+      setIsLoadingAlbums(false)
+      setIsRefreshingAlbums(false)
+    }
+  }, [token])
+
+  // コンポーネントマウント時にアルバム一覧を取得
+  React.useEffect(() => {
+    if (token) {
+      fetchAlbums()
+    }
+  }, [token]) // fetchAlbumsを依存配列から削除
+
+  // アルバム作成後に呼ばれるコールバック
+  const handleAlbumCreated = () => {
+    setIsCreateModalOpen(false)
+    // アルバム一覧を再取得（リフレッシュとして実行）
+    setIsRefreshingAlbums(true)
+    fetchAlbums(true)
+  }
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault()
@@ -83,33 +153,45 @@ export function ImageUploadScreen() {
       return
     }
 
+    if (!selectedAlbumId) {
+      toast.error('アルバムを選択してください')
+      return
+    }
+
     setIsUploading(true)
     
     try {
-      const formData = new FormData()
-      selectedImages.forEach((imageFile, index) => {
-        formData.append(`images`, imageFile.file)
+      // 各画像を個別にアップロード
+      const uploadPromises = selectedImages.map(async (imageFile, index) => {
+        const formData = new FormData()
+        formData.append('image', imageFile.file)
+
+        const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/images/upload/${selectedAlbumId}`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+          },
+          body: formData,
+        })
+
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}))
+          console.error('Upload API Error:', errorData)
+          throw new Error(`画像 ${index + 1} のアップロードに失敗しました: ${errorData.error?.message || response.statusText}`)
+        }
+
+        return response.json()
       })
 
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/images/upload`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('auth_token')}`,
-        },
-        body: formData,
-      })
-
-      if (response.ok) {
-        const data = await response.json()
-        toast.success('画像のアップロードが完了しました')
-        // 画像編集画面に遷移
-        router.push(`/edit/${data.data.albumId}`)
-      } else {
-        throw new Error('アップロードに失敗しました')
-      }
+      await Promise.all(uploadPromises)
+      
+      toast.success(`${selectedImages.length}枚の画像のアップロードが完了しました`)
+      // 画像編集画面に遷移
+      router.push(`/edit/${selectedAlbumId}`)
     } catch (error) {
       console.error('Upload error:', error)
-      toast.error('アップロードに失敗しました')
+      const errorMessage = error instanceof Error ? error.message : 'アップロードに失敗しました'
+      toast.error(errorMessage)
     } finally {
       setIsUploading(false)
     }
@@ -145,6 +227,43 @@ export function ImageUploadScreen() {
       </div>
 
       <div className="max-w-4xl mx-auto px-4 py-8">
+        {/* アルバム選択 */}
+        {isLoadingAlbums ? (
+          <div className="bg-white rounded-lg shadow-md p-6 mb-8">
+            <div className="animate-pulse">
+              <div className="h-4 bg-gray-200 rounded w-1/4 mb-2"></div>
+              <div className="h-10 bg-gray-200 rounded"></div>
+            </div>
+          </div>
+        ) : (
+          <div className="bg-white rounded-lg shadow-md p-6 mb-8">
+            <h3 className="text-lg font-medium text-gray-900 mb-4">アルバムを選択</h3>
+            {albums.length > 0 ? (
+              <select
+                value={selectedAlbumId}
+                onChange={(e) => setSelectedAlbumId(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+              >
+                {albums.map((album) => (
+                  <option key={album.id} value={album.id}>
+                    {album.name}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <div className="text-center py-8">
+                <p className="text-gray-500 mb-4">アルバムがありません</p>
+                <button
+                  onClick={() => setIsCreateModalOpen(true)}
+                  className="btn-primary"
+                >
+                  アルバムを作成
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* ドラッグ&ドロップエリア */}
         <div
           className={`border-2 border-dashed rounded-lg p-12 text-center transition-colors ${
@@ -226,6 +345,13 @@ export function ImageUploadScreen() {
           </div>
         )}
       </div>
+
+      {/* アルバム作成モーダル */}
+      <CreateAlbumModal
+        isOpen={isCreateModalOpen}
+        onClose={() => setIsCreateModalOpen(false)}
+        onAlbumCreated={handleAlbumCreated}
+      />
     </div>
   )
 }

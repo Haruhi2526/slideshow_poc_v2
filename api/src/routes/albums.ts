@@ -73,9 +73,9 @@ router.get('/:id', authenticateToken, asyncHandler(async (req: AuthRequest, res:
     });
   }
 
-  // 画像一覧も取得
+  // 画像一覧も取得（表示順序でソート）
   const [images] = await pool.execute(
-    'SELECT * FROM images WHERE album_id = ? ORDER BY created_at ASC',
+    'SELECT * FROM images WHERE album_id = ? ORDER BY display_order ASC, created_at ASC',
     [id]
   );
 
@@ -139,6 +139,84 @@ router.delete('/:id', authenticateToken, asyncHandler(async (req: AuthRequest, r
     success: true,
     data: { message: 'Album deleted successfully' }
   });
+}));
+
+// アルバムの画像一覧取得
+router.get('/:id/images', authenticateToken, asyncHandler(async (req: AuthRequest, res: Response) => {
+  const { id } = req.params;
+  const userId = req.user!.id;
+  const pool = getPool();
+
+  // アルバムの所有権確認
+  const [albumRows] = await pool.execute(
+    'SELECT * FROM albums WHERE id = ? AND user_id = ?',
+    [id, userId]
+  );
+
+  if ((albumRows as any[]).length === 0) {
+    return res.status(404).json({
+      success: false,
+      error: { message: 'Album not found' }
+    });
+  }
+
+  // 画像一覧取得
+  const [images] = await pool.execute(
+    'SELECT * FROM images WHERE album_id = ? ORDER BY display_order ASC, created_at ASC',
+    [id]
+  );
+
+  return res.json({
+    success: true,
+    data: { images }
+  });
+}));
+
+// 画像の順序変更と回転更新
+router.put('/:id/images/reorder', authenticateToken, asyncHandler(async (req: AuthRequest, res: Response) => {
+  const { id } = req.params;
+  const { images } = req.body;
+  const userId = req.user!.id;
+  const pool = getPool();
+
+  // アルバムの所有権確認
+  const [albumRows] = await pool.execute(
+    'SELECT * FROM albums WHERE id = ? AND user_id = ?',
+    [id, userId]
+  );
+
+  if ((albumRows as any[]).length === 0) {
+    return res.status(404).json({
+      success: false,
+      error: { message: 'Album not found' }
+    });
+  }
+
+  // トランザクション開始
+  const connection = await pool.getConnection();
+  await connection.beginTransaction();
+
+  try {
+    // 各画像の順序と回転を更新
+    for (const imageData of images) {
+      await connection.execute(
+        'UPDATE images SET display_order = ?, rotation = ? WHERE id = ? AND album_id = ?',
+        [imageData.order, imageData.rotation, imageData.id, id]
+      );
+    }
+
+    await connection.commit();
+    
+    return res.json({
+      success: true,
+      data: { message: 'Images reordered successfully' }
+    });
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
 }));
 
 export default router;
