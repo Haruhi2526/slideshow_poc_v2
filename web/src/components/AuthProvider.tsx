@@ -69,27 +69,34 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const login = async (lineUserId: string, displayName?: string, pictureUrl?: string) => {
     try {
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/auth/login`, {
+      console.log('Attempting test login with userId:', lineUserId);
+      console.log('API URL:', process.env.NEXT_PUBLIC_API_URL);
+      
+      // テストログインエンドポイントを使用
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/auth/test/login`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          lineUserId,
-          displayName,
-          pictureUrl,
+          userId: lineUserId,
         }),
       })
 
+      console.log('Response status:', response.status);
+      console.log('Response headers:', response.headers);
+
       const data = await response.json()
+      console.log('Response data:', data);
 
       if (data.success) {
         setUser(data.data.user)
         setToken(data.data.token)
         Cookies.set('auth_token', data.data.token, { expires: 7 })
-        toast.success('ログインしました')
+        toast.success('テストユーザーでログインしました')
         router.push('/')
       } else {
+        console.error('Login failed:', data.error);
         toast.error(data.error.message || 'ログインに失敗しました')
       }
     } catch (error) {

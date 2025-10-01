@@ -7,6 +7,97 @@ import { getPool } from '../utils/database';
 
 const router = Router();
 
+// テストユーザー認証（開発環境のみ）
+router.post('/test/login', asyncHandler(async (req: Request, res: Response) => {
+  try {
+    console.log('Test login request received:', req.body);
+    
+    const { userId } = req.body;
+    
+    if (process.env.NODE_ENV === 'production') {
+      console.log('Test login blocked in production');
+      return res.status(403).json({
+        success: false,
+        error: { message: 'Test login is not available in production' }
+      });
+    }
+    
+    if (!userId) {
+      console.log('No userId provided');
+      return res.status(400).json({
+        success: false,
+        error: { message: 'User ID is required' }
+      });
+    }
+    
+    console.log('Attempting to connect to database...');
+    const pool = getPool();
+    
+    // テストユーザーを検索または作成
+    console.log('Searching for existing user:', userId);
+    let [rows] = await pool.execute(
+      'SELECT * FROM users WHERE line_user_id = ?',
+      [userId]
+    );
+    
+    let user = (rows as any[])[0];
+    console.log('Existing user found:', user ? 'Yes' : 'No');
+    
+    if (!user) {
+      console.log('Creating new test user...');
+      // 新規テストユーザー作成
+      [rows] = await pool.execute(
+        'INSERT INTO users (line_user_id, display_name, picture_url) VALUES (?, ?, ?)',
+        [userId, `Test User ${userId}`, '']
+      );
+      
+      const insertResult = rows as any;
+      console.log('User created with ID:', insertResult.insertId);
+      
+      user = {
+        id: insertResult.insertId,
+        line_user_id: userId,
+        display_name: `Test User ${userId}`,
+        picture_url: ''
+      };
+    }
+    
+    console.log('Generating JWT token for user:', user.id);
+    
+    // JWTトークンを生成
+    const token = jwt.sign(
+      { 
+        userId: user.id,
+        lineUserId: user.line_user_id,
+        displayName: user.display_name
+      },
+      process.env.JWT_SECRET || 'your_jwt_secret_key_here',
+      { expiresIn: '24h' }
+    );
+    
+    console.log('Test login successful for user:', user.id);
+    
+    return res.json({
+      success: true,
+      data: {
+        token,
+        user: {
+          id: user.id,
+          line_user_id: user.line_user_id,
+          display_name: user.display_name,
+          picture_url: user.picture_url
+        }
+      }
+    });
+  } catch (error) {
+    console.error('Test login error:', error);
+    return res.status(500).json({
+      success: false,
+      error: { message: 'Internal server error during test login' }
+    });
+  }
+}));
+
 // LINE Login認証URL生成
 router.get('/line/login', asyncHandler(async (req: Request, res: Response) => {
   const channelId = process.env.LINE_CHANNEL_ID;
