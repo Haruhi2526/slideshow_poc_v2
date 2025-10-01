@@ -49,7 +49,33 @@ export function AlbumList() {
 
       if (response.ok) {
         const data = await response.json()
-        setAlbums(data.data.albums)
+        // 各アルバムの画像情報を取得
+        const albumsWithImages = await Promise.all(
+          data.data.albums.map(async (album: Album) => {
+            try {
+              const imagesResponse = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/images/album/${album.id}`, {
+                headers: {
+                  'Authorization': `Bearer ${token}`,
+                },
+              })
+              
+              if (imagesResponse.ok) {
+                const imagesData = await imagesResponse.json()
+                const images = imagesData.data.images || []
+                return {
+                  ...album,
+                  image_count: images.length,
+                  thumbnail_url: images.length > 0 ? images[0].url : undefined
+                }
+              }
+              return album
+            } catch (error) {
+              console.error(`Failed to fetch images for album ${album.id}:`, error)
+              return album
+            }
+          })
+        )
+        setAlbums(albumsWithImages)
       } else {
         toast.error('アルバムの取得に失敗しました')
       }

@@ -16,6 +16,7 @@ interface AuthContextType {
   user: User | null
   token: string | null
   login: (lineUserId: string, displayName?: string, pictureUrl?: string) => Promise<void>
+  loginWithLine: () => Promise<void>
   logout: () => void
   isLoading: boolean
 }
@@ -97,6 +98,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }
 
+  const loginWithLine = async () => {
+    try {
+      // LINE Login URLを取得
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/auth/line/login`)
+      const data = await response.json()
+      
+      if (data.success) {
+        // LINE Loginページにリダイレクト
+        window.location.href = data.data.loginUrl
+      } else {
+        toast.error('LINE Loginの初期化に失敗しました')
+      }
+    } catch (error) {
+      console.error('LINE Login error:', error)
+      toast.error('LINE Loginに失敗しました')
+    }
+  }
+
   const logout = () => {
     setUser(null)
     setToken(null)
@@ -106,7 +125,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   return (
-    <AuthContext.Provider value={{ user, token, login, logout, isLoading }}>
+    <AuthContext.Provider value={{ user, token, login, loginWithLine, logout, isLoading }}>
       {children}
     </AuthContext.Provider>
   )

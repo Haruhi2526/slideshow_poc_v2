@@ -32,8 +32,10 @@ app.use(limiter);
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// 静的ファイル配信
-app.use('/uploads', express.static('uploads'));
+// 静的ファイル配信（ローカルストレージの場合のみ）
+if (process.env.STORAGE_TYPE !== 's3') {
+  app.use('/uploads', express.static('uploads'));
+}
 
 // ルート
 app.use('/api/auth', authRoutes);
