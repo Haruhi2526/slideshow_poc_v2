@@ -4,7 +4,7 @@ import { useAuth } from './AuthProvider'
 import { useState } from 'react'
 
 export function Header() {
-  const { user, logout, isLoading } = useAuth()
+  const { user, logout, isLoading, login } = useAuth()
   const [isMenuOpen, setIsMenuOpen] = useState(false)
 
   if (isLoading) {
@@ -28,17 +28,15 @@ export function Header() {
             <h1 className="text-xl font-bold text-gray-900">Slideshow App</h1>
             <button
               onClick={() => {
-                // 簡易ログイン（実際の実装ではLINE Loginを使用）
-                const lineUserId = prompt('LINE User IDを入力してください（テスト用）:')
+                // テスト用ログイン
+                const lineUserId = prompt('テスト用LINE User IDを入力してください（例: test_user_123）:')
                 if (lineUserId) {
-                  // テスト用のログイン
-                  const { login } = useAuth()
                   login(lineUserId, 'テストユーザー', '')
                 }
               }}
               className="btn-primary"
             >
-              ログイン
+              テストログイン
             </button>
           </div>
         </div>

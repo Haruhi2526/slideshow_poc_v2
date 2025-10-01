@@ -59,8 +59,12 @@ router.post('/upload/:albumId', authenticateToken, upload.single('image'), async
   }
 
   try {
+    console.log(`Starting image upload for album ${albumId}, user ${userId}`);
+    console.log(`File details: ${req.file.originalname}, size: ${req.file.size}, type: ${req.file.mimetype}`);
+    
     // ストレージサービスを使用して画像をアップロード
     const uploadResult = await storageService.upload(req.file, albumId);
+    console.log(`Storage upload completed: ${uploadResult.url}`);
     
     // データベースに画像情報を保存
     const [result] = await pool.execute(
@@ -79,6 +83,8 @@ router.post('/upload/:albumId', authenticateToken, upload.single('image'), async
     );
 
     const insertResult = result as any;
+    console.log(`Image saved to database with ID: ${insertResult.insertId}`);
+    
     return res.status(201).json({
       success: true,
       data: {
@@ -97,9 +103,10 @@ router.post('/upload/:albumId', authenticateToken, upload.single('image'), async
     });
   } catch (error) {
     console.error('Image processing error:', error);
+    const errorMessage = error instanceof Error ? error.message : 'Failed to process image';
     return res.status(500).json({
       success: false,
-      error: { message: 'Failed to process image' }
+      error: { message: errorMessage }
     });
   }
 }));

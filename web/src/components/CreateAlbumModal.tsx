@@ -7,9 +7,10 @@ import toast from 'react-hot-toast'
 interface CreateAlbumModalProps {
   isOpen: boolean
   onClose: () => void
+  onAlbumCreated?: () => void
 }
 
-export function CreateAlbumModal({ isOpen, onClose }: CreateAlbumModalProps) {
+export function CreateAlbumModal({ isOpen, onClose, onAlbumCreated }: CreateAlbumModalProps) {
   const { token } = useAuth()
   const [formData, setFormData] = useState({
     name: '',
@@ -42,8 +43,12 @@ export function CreateAlbumModal({ isOpen, onClose }: CreateAlbumModalProps) {
         toast.success('アルバムを作成しました')
         setFormData({ name: '', description: '' })
         onClose()
-        // ページをリロードしてアルバム一覧を更新
-        window.location.reload()
+        // コールバック関数が提供されている場合は呼び出し、そうでなければページをリロード
+        if (onAlbumCreated) {
+          onAlbumCreated()
+        } else {
+          window.location.reload()
+        }
       } else {
         toast.error(data.error.message || 'アルバムの作成に失敗しました')
       }

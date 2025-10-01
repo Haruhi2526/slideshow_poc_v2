@@ -3,6 +3,8 @@
 import React, { useState, useRef, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import toast from 'react-hot-toast'
+import { useAuth } from './AuthProvider'
+import { CreateAlbumModal } from './CreateAlbumModal'
 
 interface ImageFile {
   file: File
@@ -18,20 +20,34 @@ interface Album {
 
 export function ImageUploadScreen() {
   const router = useRouter()
+  const { token } = useAuth()
   const [selectedImages, setSelectedImages] = useState<ImageFile[]>([])
   const [isDragOver, setIsDragOver] = useState(false)
   const [isUploading, setIsUploading] = useState(false)
   const [albums, setAlbums] = useState<Album[]>([])
   const [selectedAlbumId, setSelectedAlbumId] = useState<string>('')
   const [isLoadingAlbums, setIsLoadingAlbums] = useState(true)
+  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false)
+  const [isRefreshingAlbums, setIsRefreshingAlbums] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   // アルバム一覧を取得
-  const fetchAlbums = useCallback(async () => {
+  const fetchAlbums = useCallback(async (isRefresh = false) => {
+    if (!token) {
+      console.log('No token available, skipping album fetch')
+      setIsLoadingAlbums(false)
+      return
+    }
+    
+    // リフレッシュ中でない場合のみローディング状態を設定
+    if (!isRefresh) {
+      setIsLoadingAlbums(true)
+    }
+    
     try {
       const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/albums`, {
         headers: {
-          'Authorization': `Bearer ${localStorage.getItem('auth_token')}`,
+          'Authorization': `Bearer ${token}`,
         },
       })
 
@@ -42,20 +58,34 @@ export function ImageUploadScreen() {
           setSelectedAlbumId(data.data.albums[0].id)
         }
       } else {
-        throw new Error('アルバムの取得に失敗しました')
+        const errorData = await response.json().catch(() => ({}))
+        console.error('API Error:', errorData)
+        const errorMessage = `アルバムの取得に失敗しました: ${errorData.error?.message || response.statusText}`
+        toast.error(errorMessage)
       }
     } catch (error) {
       console.error('Fetch albums error:', error)
       toast.error('アルバムの取得に失敗しました')
     } finally {
       setIsLoadingAlbums(false)
+      setIsRefreshingAlbums(false)
     }
-  }, [])
+  }, [token])
 
   // コンポーネントマウント時にアルバム一覧を取得
   React.useEffect(() => {
-    fetchAlbums()
-  }, [fetchAlbums])
+    if (token) {
+      fetchAlbums()
+    }
+  }, [token]) // fetchAlbumsを依存配列から削除
+
+  // アルバム作成後に呼ばれるコールバック
+  const handleAlbumCreated = () => {
+    setIsCreateModalOpen(false)
+    // アルバム一覧を再取得（リフレッシュとして実行）
+    setIsRefreshingAlbums(true)
+    fetchAlbums(true)
+  }
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault()
@@ -139,13 +169,15 @@ export function ImageUploadScreen() {
         const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/images/upload/${selectedAlbumId}`, {
           method: 'POST',
           headers: {
-            'Authorization': `Bearer ${localStorage.getItem('auth_token')}`,
+            'Authorization': `Bearer ${token}`,
           },
           body: formData,
         })
 
         if (!response.ok) {
-          throw new Error(`画像 ${index + 1} のアップロードに失敗しました`)
+          const errorData = await response.json().catch(() => ({}))
+          console.error('Upload API Error:', errorData)
+          throw new Error(`画像 ${index + 1} のアップロードに失敗しました: ${errorData.error?.message || response.statusText}`)
         }
 
         return response.json()
@@ -158,7 +190,8 @@ export function ImageUploadScreen() {
       router.push(`/edit/${selectedAlbumId}`)
     } catch (error) {
       console.error('Upload error:', error)
-      toast.error('アップロードに失敗しました')
+      const errorMessage = error instanceof Error ? error.message : 'アップロードに失敗しました'
+      toast.error(errorMessage)
     } finally {
       setIsUploading(false)
     }
@@ -221,7 +254,7 @@ export function ImageUploadScreen() {
               <div className="text-center py-8">
                 <p className="text-gray-500 mb-4">アルバムがありません</p>
                 <button
-                  onClick={() => router.push('/')}
+                  onClick={() => setIsCreateModalOpen(true)}
                   className="btn-primary"
                 >
                   アルバムを作成
@@ -312,6 +345,13 @@ export function ImageUploadScreen() {
           </div>
         )}
       </div>
+
+      {/* アルバム作成モーダル */}
+      <CreateAlbumModal
+        isOpen={isCreateModalOpen}
+        onClose={() => setIsCreateModalOpen(false)}
+        onAlbumCreated={handleAlbumCreated}
+      />
     </div>
   )
 }

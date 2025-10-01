@@ -1,8 +1,9 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import toast from 'react-hot-toast'
+import { useAuth } from './AuthProvider'
 
 interface Image {
   id: string
@@ -17,6 +18,7 @@ interface ImageEditScreenProps {
 
 export function ImageEditScreen({ albumId }: ImageEditScreenProps) {
   const router = useRouter()
+  const { token } = useAuth()
   const [images, setImages] = useState<Image[]>([])
   const [selectedImageId, setSelectedImageId] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(true)
@@ -25,34 +27,53 @@ export function ImageEditScreen({ albumId }: ImageEditScreenProps) {
   const dragItem = useRef<number | null>(null)
   const dragOverItem = useRef<number | null>(null)
 
-  useEffect(() => {
-    fetchImages()
-  }, [albumId])
-
-  const fetchImages = async () => {
+  const fetchImages = useCallback(async () => {
+    if (!token) {
+      console.log('No token available, skipping image fetch')
+      setIsLoading(false)
+      return
+    }
+    
     try {
       const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/albums/${albumId}/images`, {
         headers: {
-          'Authorization': `Bearer ${localStorage.getItem('auth_token')}`,
+          'Authorization': `Bearer ${token}`,
         },
       })
 
       if (response.ok) {
         const data = await response.json()
+        console.log('Received image data:', data)
+        console.log('Images array:', data.data.images)
+        if (data.data.images.length > 0) {
+          console.log('First image URL:', data.data.images[0].url)
+        }
         setImages(data.data.images)
         if (data.data.images.length > 0) {
           setSelectedImageId(data.data.images[0].id)
         }
       } else {
-        throw new Error('画像の取得に失敗しました')
+        const errorData = await response.json().catch(() => ({}))
+        console.error('API Error:', errorData)
+        const errorMessage = `画像の取得に失敗しました: ${errorData.error?.message || response.statusText}`
+        toast.error(errorMessage)
+        setIsLoading(false)
+        return
       }
     } catch (error) {
       console.error('Fetch images error:', error)
-      toast.error('画像の取得に失敗しました')
+      // ネットワークエラーなどの場合のみエラーメッセージを表示
+      if (!(error instanceof Error && error.message.includes('画像の取得に失敗しました'))) {
+        toast.error('画像の取得に失敗しました')
+      }
     } finally {
       setIsLoading(false)
     }
-  }
+  }, [albumId, token])
+
+  useEffect(() => {
+    fetchImages()
+  }, [fetchImages])
 
   const handleDragStart = (e: React.DragEvent, index: number) => {
     dragItem.current = index
@@ -104,7 +125,7 @@ export function ImageEditScreen({ albumId }: ImageEditScreenProps) {
       const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/images/${imageId}`, {
         method: 'DELETE',
         headers: {
-          'Authorization': `Bearer ${localStorage.getItem('auth_token')}`,
+          'Authorization': `Bearer ${token}`,
         },
       })
 
@@ -136,7 +157,7 @@ export function ImageEditScreen({ albumId }: ImageEditScreenProps) {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('auth_token')}`,
+          'Authorization': `Bearer ${token}`,
         },
         body: JSON.stringify({
           images: images.map((img, index) => ({
@@ -178,6 +199,11 @@ export function ImageEditScreen({ albumId }: ImageEditScreenProps) {
   }
 
   const selectedImage = images.find(img => img.id === selectedImageId)
+  
+  // デバッグ用ログ
+  console.log('Current images:', images)
+  console.log('Selected image ID:', selectedImageId)
+  console.log('Selected image:', selectedImage)
 
   if (isLoading) {
     return (
@@ -273,6 +299,8 @@ export function ImageEditScreen({ albumId }: ImageEditScreenProps) {
                       alt={selectedImage.filename}
                       className="w-full h-full object-contain"
                       style={{ transform: `rotate(${selectedImage.rotation}deg)` }}
+                      onLoad={() => console.log('Image loaded successfully:', selectedImage.url)}
+                      onError={(e) => console.error('Image load error:', selectedImage.url, e)}
                     />
                   </div>
                   

@@ -25,7 +25,18 @@ const limiter = rateLimit({
 });
 
 // ミドルウェア
-app.use(helmet());
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      imgSrc: ["'self'", "data:", "http://localhost:3001"],
+      scriptSrc: ["'self'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+    },
+  },
+  crossOriginResourcePolicy: { policy: "cross-origin" },
+  crossOriginEmbedderPolicy: false,
+}));
 app.use(cors());
 app.use(morgan('combined'));
 app.use(limiter);
@@ -34,7 +45,12 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // 静的ファイル配信（ローカルストレージの場合のみ）
 if (process.env.STORAGE_TYPE !== 's3') {
-  app.use('/uploads', express.static('uploads'));
+  app.use('/uploads', (req, res, next) => {
+    res.header('Access-Control-Allow-Origin', '*');
+    res.header('Access-Control-Allow-Methods', 'GET');
+    res.header('Access-Control-Allow-Headers', 'Content-Type');
+    next();
+  }, express.static('uploads'));
 }
 
 // ルート

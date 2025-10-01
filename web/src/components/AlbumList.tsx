@@ -110,7 +110,7 @@ export function AlbumList() {
 
   const handleSlideshowClick = (slideshowId: number) => {
     // 動画再生画面への遷移（今回は設計対象外）
-    toast.info('動画再生機能は今後実装予定です')
+    toast('動画再生機能は今後実装予定です', { icon: 'ℹ️' })
   }
 
   const handleUploadClick = () => {
@@ -180,9 +180,30 @@ export function AlbumList() {
             
             <div className="text-center">
               <h3 className="font-medium text-gray-900 mb-1">{album.name}</h3>
-              <p className="text-sm text-gray-500">
+              <p className="text-sm text-gray-500 mb-3">
                 {album.image_count || 0}枚の画像
               </p>
+              
+              <div className="flex space-x-2">
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    router.push(`/slideshow/${album.id}`)
+                  }}
+                  className="flex-1 btn-secondary text-xs py-2"
+                >
+                  スライドショー
+                </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    router.push(`/slideshow/create/${album.id}`)
+                  }}
+                  className="flex-1 btn-primary text-xs py-2"
+                >
+                  作成
+                </button>
+              </div>
             </div>
           </div>
         ))}
