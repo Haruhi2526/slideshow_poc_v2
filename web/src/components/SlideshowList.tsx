@@ -217,7 +217,7 @@ export function SlideshowList({ albumId }: SlideshowListProps) {
               <div className="aspect-video bg-gray-100 flex items-center justify-center">
                 {slideshow.status === 'completed' ? (
                   <video
-                    src={`${process.env.NEXT_PUBLIC_API_URL}/${slideshow.file_path}`}
+                    src={`${process.env.NEXT_PUBLIC_API_URL}/api/slideshows/play/${slideshow.id}`}
                     className="w-full h-full object-cover"
                     controls
                   />
@@ -249,15 +249,23 @@ export function SlideshowList({ albumId }: SlideshowListProps) {
                 
                 <div className="flex space-x-2 mt-4">
                   {slideshow.status === 'completed' && (
-                    <button
-                      onClick={() => {
-                        const videoUrl = `${process.env.NEXT_PUBLIC_API_URL}/${slideshow.file_path}`
-                        window.open(videoUrl, '_blank')
-                      }}
-                      className="flex-1 btn-primary text-sm py-2"
-                    >
-                      再生
-                    </button>
+                    <>
+                      <button
+                        onClick={() => router.push(`/slideshow/play/${slideshow.id}`)}
+                        className="flex-1 btn-primary text-sm py-2"
+                      >
+                        再生
+                      </button>
+                      <button
+                        onClick={() => {
+                          const videoUrl = `${process.env.NEXT_PUBLIC_API_URL}/api/slideshows/play/${slideshow.id}`
+                          window.open(videoUrl, '_blank')
+                        }}
+                        className="flex-1 btn-secondary text-sm py-2"
+                      >
+                        新しいタブで開く
+                      </button>
+                    </>
                   )}
                   <button
                     onClick={() => deleteSlideshow(slideshow.id)}

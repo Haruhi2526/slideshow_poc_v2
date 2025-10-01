@@ -1,6 +1,8 @@
 import { Router, Request, Response } from 'express';
 import ffmpeg from 'fluent-ffmpeg';
 import path from 'path';
+import fs from 'fs';
+import jwt from 'jsonwebtoken';
 import { asyncHandler } from '../middleware/errorHandler';
 import { authenticateToken, AuthRequest } from '../middleware/auth';
 import { getPool } from '../utils/database';
@@ -110,9 +112,9 @@ const generateSlideshowAsync = async (slideshowId: number, images: any[], albumI
         command.input(image.file_path);
       });
 
-      // 複数画像のスライドショー生成
+      // 複数画像のスライドショー生成（各画像2秒表示）
       const filterParts = images.map((_, index) => 
-        `[${index}:v]scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2,setsar=1[img${index}]`
+        `[${index}:v]scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2,setsar=1,loop=loop=59:size=1:start=0[img${index}]`
       );
       
       // 画像を連結するフィルター
@@ -129,7 +131,8 @@ const generateSlideshowAsync = async (slideshowId: number, images: any[], albumI
           '-pix_fmt yuv420p',
           '-r 30',
           '-preset fast',
-          '-crf 23'
+          '-crf 23',
+          '-t', `${images.length * 2}` // 各画像2秒、総時間 = 画像数 × 2秒
         ])
         .output(outputPath)
         .on('start', (commandLine) => {
@@ -272,6 +275,260 @@ router.get('/status/:id', authenticateToken, asyncHandler(async (req: AuthReques
     success: true,
     data: { slideshow }
   });
+}));
+
+// OPTIONSリクエスト（プリフライト）対応
+router.options('/play/:id', (req, res) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Range, Content-Type, Authorization');
+  res.header('Access-Control-Expose-Headers', 'Content-Range, Accept-Ranges, Content-Length');
+  res.header('Access-Control-Max-Age', '86400');
+  res.status(200).end();
+});
+
+// 一時的なトークン付きURL生成
+router.post('/play/:id/temp-url', authenticateToken, asyncHandler(async (req: AuthRequest, res: Response) => {
+  const { id } = req.params;
+  const userId = req.user!.id;
+  const pool = getPool();
+
+  // スライドショーの存在確認と所有権確認
+  const [rows] = await pool.execute(
+    'SELECT s.* FROM slideshows s JOIN albums a ON s.album_id = a.id WHERE s.id = ? AND a.user_id = ?',
+    [id, userId]
+  );
+
+  const slideshow = (rows as any[])[0];
+  if (!slideshow) {
+    res.status(404).json({
+      success: false,
+      error: { message: 'Slideshow not found' }
+    });
+    return;
+  }
+
+  if (slideshow.status !== 'completed') {
+    res.status(400).json({
+      success: false,
+      error: { message: 'Slideshow is not ready for playback' }
+    });
+    return;
+  }
+
+  // 一時的なトークンを生成（5分間有効）
+  const tempToken = jwt.sign(
+    { 
+      slideshowId: id,
+      userId: userId,
+      type: 'temp_video_access'
+    },
+    process.env.JWT_SECRET!,
+    { expiresIn: '5m' }
+  );
+
+  // 一時的なURLを生成
+  const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001'
+  const tempUrl = `${apiUrl}/api/slideshows/play-temp/${id}?token=${tempToken}`;
+
+  res.json({
+    success: true,
+    data: {
+      tempUrl: tempUrl,
+      expiresIn: 300 // 5分（秒）
+    }
+  });
+}));
+
+// 一時的なトークン検証ミドルウェア
+const authenticateTempToken = (req: Request, res: Response, next: Function) => {
+  const token = req.query.token as string;
+  
+  if (!token) {
+    res.status(401).json({
+      success: false,
+      error: { message: 'Temporary token required' }
+    });
+    return;
+  }
+
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET!) as any;
+    
+    if (decoded.type !== 'temp_video_access') {
+      res.status(401).json({
+        success: false,
+        error: { message: 'Invalid token type' }
+      });
+      return;
+    }
+
+    // リクエストオブジェクトにユーザー情報を追加
+    (req as any).user = { id: decoded.userId };
+    (req as any).slideshowId = decoded.slideshowId;
+    next();
+  } catch (error) {
+    res.status(401).json({
+      success: false,
+      error: { message: 'Invalid or expired token' }
+    });
+    return;
+  }
+};
+
+// 一時的なトークン付き動画配信
+router.get('/play-temp/:id', authenticateTempToken, asyncHandler(async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const userId = (req as any).user.id;
+  const pool = getPool();
+
+  // スライドショーの存在確認と所有権確認
+  const [rows] = await pool.execute(
+    'SELECT s.* FROM slideshows s JOIN albums a ON s.album_id = a.id WHERE s.id = ? AND a.user_id = ?',
+    [id, userId]
+  );
+
+  const slideshow = (rows as any[])[0];
+  if (!slideshow) {
+    return res.status(404).json({
+      success: false,
+      error: { message: 'Slideshow not found' }
+    });
+  }
+
+  if (slideshow.status !== 'completed') {
+    return res.status(400).json({
+      success: false,
+      error: { message: 'Slideshow is not ready for playback' }
+    });
+  }
+
+  const filePath = slideshow.file_path;
+  
+  // ファイルの存在確認
+  if (!fs.existsSync(filePath)) {
+    return res.status(404).json({
+      success: false,
+      error: { message: 'Video file not found' }
+    });
+  }
+
+  const stat = fs.statSync(filePath);
+  const fileSize = stat.size;
+  const range = req.headers.range;
+
+  // CORSヘッダーを設定
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Range, Content-Type, Authorization');
+  res.header('Access-Control-Expose-Headers', 'Content-Range, Accept-Ranges, Content-Length');
+
+  if (range) {
+    // Rangeリクエスト（ストリーミング再生）の処理
+    const parts = range.replace(/bytes=/, "").split("-");
+    const start = parseInt(parts[0], 10);
+    const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
+    const chunksize = (end - start) + 1;
+    const file = fs.createReadStream(filePath, { start, end });
+    const head = {
+      'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+      'Accept-Ranges': 'bytes',
+      'Content-Length': chunksize,
+      'Content-Type': 'video/mp4',
+      'Cache-Control': 'no-cache',
+    };
+    res.writeHead(206, head);
+    file.pipe(res);
+    return;
+  } else {
+    // 通常のリクエスト
+    const head = {
+      'Content-Length': fileSize,
+      'Content-Type': 'video/mp4',
+      'Accept-Ranges': 'bytes',
+      'Cache-Control': 'no-cache',
+    };
+    res.writeHead(200, head);
+    fs.createReadStream(filePath).pipe(res);
+    return;
+  }
+}));
+
+// スライドショー動画配信（元のエンドポイント - 後方互換性のため残す）
+router.get('/play/:id', authenticateToken, asyncHandler(async (req: AuthRequest, res: Response) => {
+  const { id } = req.params;
+  const userId = req.user!.id;
+  const pool = getPool();
+
+  const [rows] = await pool.execute(
+    'SELECT s.* FROM slideshows s JOIN albums a ON s.album_id = a.id WHERE s.id = ? AND a.user_id = ?',
+    [id, userId]
+  );
+
+  const slideshow = (rows as any[])[0];
+  if (!slideshow) {
+    return res.status(404).json({
+      success: false,
+      error: { message: 'Slideshow not found' }
+    });
+  }
+
+  if (slideshow.status !== 'completed') {
+    return res.status(400).json({
+      success: false,
+      error: { message: 'Slideshow is not ready for playback' }
+    });
+  }
+
+  const filePath = slideshow.file_path;
+  
+  // ファイルの存在確認
+  if (!fs.existsSync(filePath)) {
+    return res.status(404).json({
+      success: false,
+      error: { message: 'Video file not found' }
+    });
+  }
+
+  const stat = fs.statSync(filePath);
+  const fileSize = stat.size;
+  const range = req.headers.range;
+
+  // CORSヘッダーを設定
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Range, Content-Type, Authorization');
+  res.header('Access-Control-Expose-Headers', 'Content-Range, Accept-Ranges, Content-Length');
+
+  if (range) {
+    // Rangeリクエスト（ストリーミング再生）の処理
+    const parts = range.replace(/bytes=/, "").split("-");
+    const start = parseInt(parts[0], 10);
+    const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
+    const chunksize = (end - start) + 1;
+    const file = fs.createReadStream(filePath, { start, end });
+    const head = {
+      'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+      'Accept-Ranges': 'bytes',
+      'Content-Length': chunksize,
+      'Content-Type': 'video/mp4',
+      'Cache-Control': 'no-cache',
+    };
+    res.writeHead(206, head);
+    file.pipe(res);
+    return;
+  } else {
+    // 通常のリクエスト
+    const head = {
+      'Content-Length': fileSize,
+      'Content-Type': 'video/mp4',
+      'Accept-Ranges': 'bytes',
+      'Cache-Control': 'no-cache',
+    };
+    res.writeHead(200, head);
+    fs.createReadStream(filePath).pipe(res);
+    return;
+  }
 }));
 
 // スライドショー削除
